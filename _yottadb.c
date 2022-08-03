@@ -444,17 +444,27 @@ typedef struct ydb_key_t {
 // timeout: optional timeout in seconds to wait for lock
 static int lock(lua_State *L) {
   int num_keys = 0;
+//(Fail only if >0 args provided -- and bad ones
   if (lua_gettop(L) > 0) luaL_argcheck(L, lua_istable(L, 1), 1, "table of keys expected");
+//(Don't need to check again; could just hae 'else'
   if (lua_istable(L, 1)) {
     num_keys = luaL_len(L, 1);
     for (int i = 1; i <= num_keys; i++) {
+//iterating keys
       luaL_argcheck(L, lua_geti(L, 1, i) == LUA_TTABLE, 1, "table of keys expected");
+//top=keys[i]
       luaL_argcheck(L, lua_geti(L, -1, 1) == LUA_TSTRING, 1, "varnames must be strings"), lua_pop(L, 1);
+//keys[i][1]==STRING
+//top=keys[i]
       if (luaL_len(L, -1) > 1) {
+//there are subs after varname
         luaL_argcheck(L, lua_geti(L, -1, 2) == LUA_TTABLE, 1, "subs must be tables");
+//top=keys[i][2] (table of subs)
         for (int j = 1; j <= luaL_len(L, -1); j++) {
+//iterating table of subs
           luaL_argcheck(L, lua_geti(L, -1, j) == LUA_TSTRING, 1, "subs must be strings"), lua_pop(L, 1);
         }
+//all subs are strings
         lua_pop(L, 1); // subs
       }
       lua_pop(L, 1); // key
@@ -462,6 +472,8 @@ static int lock(lua_State *L) {
   }
   unsigned long long timeout = luaL_optnumber(L, 2, 0) * 1000000000;
   int num_args = 2 + (num_keys * 3); // timeout, num_keys, {varname, subs_used, subsarray}*
+//! check for mem full?
+//? why use malloc for args when you use stack for keys[] below
   void **args = malloc((1 + num_args) * sizeof(void *)); // include num_args itself
   int arg_i = 0;
   args[arg_i++] = (void *)(uintptr_t)num_args;
@@ -469,14 +481,19 @@ static int lock(lua_State *L) {
   args[arg_i++] = (void *)(uintptr_t)num_keys;
   ydb_key_t keys[num_keys];
   for (int i = 0; i < num_keys; i++) {
+//iterating keys
     lua_geti(L, 1, i + 1);
+//top=keys[i+1]
     lua_geti(L, -1, 1);
+//top=varname
     YDB_MALLOC_BUFFER(&keys[i].varname, luaL_len(L, -1));
     int unused;
     YDB_COPY_STRING_TO_BUFFER(lua_tostring(L, -1), &keys[i].varname, unused);
     lua_pop(L, 1); // varname
+//top=keys[i+1]
     if (luaL_len(L, -1) > 1) {
       lua_geti(L, -1, 2);
+//top=keys[i][2] (table of subs) 
       keys[i].subs_used = luaL_len(L, -1);
       keys[i].subsarray = malloc(keys[i].subs_used * sizeof(ydb_buffer_t));
       for (int j = 0; j < keys[i].subs_used; j++) {
