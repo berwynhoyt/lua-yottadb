@@ -16,17 +16,18 @@ ydb_dist=$(shell pwd)/YDB/install
 endif
 
 CC=gcc
-CFLAGS=-std=c11 -I$(ydb_dist) -I$(lua_include) -Wno-discarded-qualifiers
+CFLAGS=-g -fPIC -std=c11 -I$(ydb_dist) -I$(lua_include) -Wno-discarded-qualifiers
 LDFLAGS=-L$(ydb_dist) -lyottadb -Wl,-rpath,/usr/local/lib/yottadb/r135
 
-_yottadb.so: _yottadb.c
-	$(CC) -g $(CFLAGS) -shared -fPIC -o $@ $< $(LDFLAGS)
-
+_yottadb.so: yottadb.o callins.o exports.map
+	$(CC) yottadb.o callins.o  -o $@  -shared -Wl,--version-script=exports.map $(CFLAGS) $(LDFLAGS)
 %: %.c
-	$(CC) -g $(CFLAGS) -o $@ $< $(LDFLAGS)
+	$(CC) $<  -o $@  $(CFLAGS) $(LDFLAGS)
+%.o: %.c
+	$(CC) $<  -o $@  -c $(CFLAGS) $(LDFLAGS)
 
 clean:
-	rm -f *.so
+	rm -f *.so *.o
 
 PREFIX=/usr/local
 share_dir=$(PREFIX)/share/lua/
