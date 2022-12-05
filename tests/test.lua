@@ -2054,19 +2054,19 @@ test("sub1","appearance","hair")="blond"
 test("sub1","weight")="78"]=]
 
 local expected_table_dump = [=[
-  _: handsome
-  eyes: blue
-  hair: blond
-!@#$: junk
-_: berwyn
+  _: "handsome"
+  eyes: "blue"
+  hair: "blond"
+!@#$: "junk"
+_: "berwyn"
 appearance (table: 0x...):
-weight: 78]=]
+weight: "78"]=]
 
 local expected_level0_table_dump = [=[
-!@#$: junk
-_: berwyn
-appearance: handsome
-weight: 78]=]
+!@#$: "junk"
+_: "berwyn"
+appearance: "handsome"
+weight: "78"]=]
 
 function test_settree()
   -- check that an inserted_tree creates the correct node dump
