@@ -11,6 +11,7 @@ local lua_version = tonumber( string.match(_VERSION, " ([0-9]+[.][0-9]+)") )
 
 local _yottadb = require('_yottadb')
 for k, v in pairs(_yottadb) do if k:find('^YDB_') then M[k] = v end end
+M._VERSION = _yottadb._VERSION
 
 _string_number = {string=true, number=true}
 _string_number_nil = {string=true, number=true, ['nil']=true}

@@ -7,6 +7,7 @@
 #include <libyottadb.h>
 #include <lua.h>
 #include <lauxlib.h>
+#include "_yottadb.h"
 
 #include "compat-5.3.h" // Enable build against Lua older than 5.3
 #include "callins.h"
@@ -679,6 +680,7 @@ int luaopen__yottadb(lua_State *L) {
   for (const_Reg *c = &yottadb_constants[0]; c->name; c++) {
     lua_pushinteger(L, c->value), lua_setfield(L, -2, c->name);
   }
+  lua_pushstring(L, LUA_YOTTADB_VERSION_STRING), lua_setfield(L, -2, "_VERSION");
   lua_createtable(L, 0, 20);
   for (const_Reg *c = &yottadb_types[0]; c->name; c++) {
     lua_pushinteger(L, c->value), lua_setfield(L, -2, c->name);
