@@ -78,8 +78,6 @@ hello("cowboy")="Howdy partner!"
 nil
 ```
 
-
-
 ### Doing something useful
 
 Let's use Lua to calculate the height of 3 oak trees, based on their shadow length and the angle of the sun. Method `settree()` is a handy way to enter literal data into the database from a Lua table constructor:
@@ -129,8 +127,6 @@ value
 value
 ```
 
-
-
 ### Development aids
 
 You can enhance the Lua prompt to display database nodes when you type them. This project supplies a `startup.lua` file to make this happen. Simply set your environment variable `export LUA_INIT="require'startup'"` or `require 'startup'` from your own `start.lua` file. For this to work you will need two files from this project in your LUA_PATH: `startup.lua` and `table_dump.lua`.
@@ -171,6 +167,10 @@ Sum is: 53
 Lua parameter types are converted to ydb types automatically according to the call-in table arithmetic.ci. If you need speed, avoid returning or outputting strings from M as they require the speed hit of memory allocation.
 
 Note that the filename passed to ydb.require() may be either a call-in table filename or (if the string contains a `:`) a string specifying actual call-in routines. Review file `arithmetic.ci` and the [ydb manual](https://docs.yottadb.com/ProgrammersGuide/extrout.html#call-in-table). for details about call-in table specification.
+
+## Version History
+
+Version history is documented in [changes.md](docs/changes.md).
 
 ## Installation
 
