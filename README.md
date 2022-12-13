@@ -1,23 +1,8 @@
 # Overview
 
-Lua bindings for YottaDB, sponsored by the [Library of UAntwerpen][].
-
-Build the bindings by running `make ydb_dist=/path/to/YDB/install` where */path/to/YDB/install*
-is the path to your installation of YottaDB that contains its header and shared library files.
-
-Install the bindings by running `make install` or `sudo make install`, or copy the newly built
-*_yottadb.so* and *yottadb.lua* files to somewhere in your Lua path. You can then use `local
-yottadb = require('yottadb')` from your Lua scripts to communicate with YottaDB.  Then set up
-your YDB environment as usual (i.e. source /path/to/YDB/install/ydb_env_set) before running
-your Lua scripts.
-
-Please see the documentation in *docs/* as well as the `test_module_*` tests in *tests/test.lua*
-for examples of how to use these Lua bindings. These bindings were developed with reference to
-YottaDB's Python bindings.
+Lua bindings for YottaDB, sponsored by the [Library of UAntwerpen][]. These bindings were developed with reference to YottaDB's Python bindings.
 
 Note: these bindings are single-threaded and do not utilize YottaDB's multithreaded capabilities.
-
-[Library of UAntwerpen]: http://www.uantwerpen.be/
 
 ## Requirements
 
@@ -25,12 +10,9 @@ Note: these bindings are single-threaded and do not utilize YottaDB's multithrea
   your system's lua version by default. To override this, run `make lua=/path/to/lua`.
 * YottaDB 1.34 or later.
 
-The *Makefile* looks for Lua header files either in your compiler's default include path such
-as /usr/local/include (the lua install default) and also in */usr/include/luaX.Y*. Where *X.Y*
-is the lua version installed on your system. If your Lua headers are elsewhere, run
-`make lua_include=/path/to/your/lua/headers`.
+## Documentation
 
-## Sample Usage
+Full usage is documented [here](docs/yottadb.html). A sample is shown below:
 
 ```lua
 local yottadb = require('yottadb')
@@ -102,6 +84,31 @@ print(db('test1'), db('test1').value)
 print(db('test2'), db('test2').value)
 ```
 
+### Development aids
+
+You can enhance the Lua prompt to display database nodes when you type them. This project supplies a `startup.lua` file to make this happen. Simply set your environment variable `export LUA_INIT="require'startup'"` or `require 'startup'` from your own `start.lua` file. For this to work you will need two files from this project in your LUA_PATH: `startup.lua` and `table_dump.lua`.
+
+Now Lua tables and database nodes display their contents when you type them at the Lua REPL prompt:
+
+```lua
+> t={test=5, subtable={x=10, y=20}}
+> t
+test: 5
+subtable (table: 0x56494c7dd5b0):
+  x: 10
+  y: 20
+> n=ydb.key('^oaks')
+> n:settree({_='treedata', {shadow=10,angle=30}, {shadow=13,angle=30}, {shadow=15,angle=45}})
+> n
+^oaks="treedata"
+^oaks("1","angle")="30"
+^oaks("1","shadow")="10"
+^oaks("2","angle")="30"
+^oaks("2","shadow")="13"
+^oaks("3","angle")="45"
+^oaks("3","shadow")="15"
+```
+
 ### Calling M from Lua
 
 The Lua wrapper for M is designed for both speed and simple usage:
@@ -122,7 +129,23 @@ Note that the filename passed to ydb.require() may be either a call-in table fil
 
 ## Developer Notes
 
-### Build
+### Build & install
+
+Build the bindings by running `make ydb_dist=/path/to/YDB/install` where */path/to/YDB/install*
+is the path to your installation of YottaDB that contains its header and shared library files.
+
+Install the bindings by running `make install` or `sudo make install`, or copy the newly built
+*_yottadb.so* and *yottadb.lua* files to somewhere in your Lua path. You can then use `local
+yottadb = require('yottadb')` from your Lua scripts to communicate with YottaDB.  Then set up
+your YDB environment as usual (i.e. source /path/to/YDB/install/ydb_env_set) before running
+your Lua scripts.
+
+The *Makefile* looks for Lua header files either in your compiler's default include path such
+as /usr/local/include (the lua install default) and also in */usr/include/luaX.Y*. Where *X.Y*
+is the lua version installed on your system. If your Lua headers are elsewhere, run
+`make lua_include=/path/to/your/lua/headers`.
+
+### Sample build
 
 The following notes build and install a local copy of YottaDB to *YDB/install* in the current
 working directory. The only admin privileges required are to change ownership of *gtmsecshr*
@@ -165,30 +188,5 @@ ydb_gbldir=/tmp/lydb.gld gdb lua
 b set
 y
 r -llydb tests/test.lua
-```
-
-### Developer  Tools
-
-You can enhance the Lua prompt to display database nodes when you type them. This project supplies a `startup.lua` file to make this happen. Simply set your environment variable `export LUA_INIT="require'startup'"` or `require 'startup'` from your own `start.lua` file. For this to work you will need two files from this project in your LUA_PATH: `startup.lua` and `table_dump.lua`.
-
-Now Lua tables and database nodes display their contents when you type them at the Lua REPL prompt:
-
-```lua
-> t={test=5, subtable={x=10, y=20}}
-> t
-test: 5
-subtable (table: 0x56494c7dd5b0):
-  x: 10
-  y: 20
-> n=ydb.key('^oaks')
-> n:settree({_='treedata', {shadow=10,angle=30}, {shadow=13,angle=30}, {shadow=15,angle=45}})
-> n
-^oaks="treedata"
-^oaks("1","angle")="30"
-^oaks("1","shadow")="10"
-^oaks("2","angle")="30"
-^oaks("2","shadow")="13"
-^oaks("3","angle")="45"
-^oaks("3","shadow")="15"
 ```
 

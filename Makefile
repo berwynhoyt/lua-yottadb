@@ -33,7 +33,7 @@ _yottadb.so: yottadb.c callins.c exports.map
 
 # Requires: 'luarocks install ldoc'
 docs: docs/yottadb.html
-docs/yottadb.html: config.ld docs/config/*
+docs/yottadb.html: *.lua *.c config.ld docs/config/*
 	ldoc .
 
 clean:
