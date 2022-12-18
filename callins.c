@@ -103,68 +103,82 @@ static ydb_param cast2ydb(lua_State *L, int argi, type_spec *ydb_type, metadata 
   char isinput = ydb_type->input;
   char isoutput = ydb_type->output;
 
-  // Use IF statement -- faster than SWITCH (even if table lookup) due to pipelining (untested)
-  if (YDB_TYPE_ISSTR(type)) {
-    // first handle all string types (number types later)
-    size_t preallocation = ydb_type->preallocation;
+  switch (type) {
+  case YDB_STRING_T_PTR:
+{    size_t preallocation = ydb_type->preallocation;
     if (preallocation==-1) preallocation=YDB_MAX_STR;
     size_t length;
     char *s = lua_tolstring(L, argi, &length);
     if (!s) typeerror_cleanup(L, M, argi, "string");
-    if (type == YDB_CHAR_T_PTR) {
-      // handle ydb_char_t* type
-      if (isoutput) {
-        preallocation = YDB_MAX_STR;  // always full size since YDB cannot check for overruns
-        if (length > preallocation) length = preallocation; // prevent writing past preallocation
-        param.char_ptr = add_malloc(M, preallocation+1); // +1 for null safety-terminator
-        if (isinput) {
-          memcpy(param.char_ptr, s, length); // also copy Lua's NUL safety-terminator
-          param.char_ptr[length] = '\0';  // make sure it's null-terminated somewhere
-        } else
-          param.char_ptr[0] = '\0'; // make it a blank string to start with if it's not an input
-      } else
-        param.char_ptr = s;
-    } else if (type == YDB_STRING_T_PTR) {
-      // handle ydb_string_t* type
-      byref_slot *slot = get_slot(M);
-      param.string_ptr = &slot->string;
-      if (isoutput) {
-        if (length > preallocation) length = preallocation; // prevent writing past preallocation
-        slot->string.address = add_malloc(M, preallocation);
-        slot->string.length = preallocation;
-        if (isinput) {
-          memcpy(slot->string.address, s, length);
-          slot->string.length = length;
-        }
-      } else {
-        slot->string.address = s;
+    // handle ydb_string_t* type
+    byref_slot *slot = get_slot(M);
+    param.string_ptr = &slot->string;
+    if (isoutput) {
+      if (length > preallocation) length = preallocation; // prevent writing past preallocation
+      slot->string.address = add_malloc(M, preallocation);
+      slot->string.length = preallocation;
+      if (isinput) {
+        memcpy(slot->string.address, s, length);
         slot->string.length = length;
       }
-    } else if (type == YDB_BUFFER_T_PTR) {
-      // handle ydb_buffer_t* type
-      byref_slot *slot = get_slot(M);
-      param.buffer_ptr = &slot->buffer;
-      if (isoutput) {
-        if (length > preallocation) length = preallocation; // prevent writing past preallocation
-        slot->buffer.buf_addr = add_malloc(M, preallocation);
-        slot->buffer.len_alloc = preallocation;
-        slot->buffer.len_used = 0;
-        if (isinput) {
-          memcpy(slot->buffer.buf_addr, s, length);
-          slot->buffer.len_used = length;
-        }
-      } else {
-        slot->buffer.buf_addr = s;
-        slot->buffer.len_alloc = length;
+    } else {
+      slot->string.address = s;
+      slot->string.length = length;
+    }
+}    break;
+  case YDB_CHAR_T_PTR:
+{    size_t preallocation = ydb_type->preallocation;
+    if (preallocation==-1) preallocation=YDB_MAX_STR;
+    size_t length;
+    char *s = lua_tolstring(L, argi, &length);
+    if (!s) typeerror_cleanup(L, M, argi, "string");
+    // handle ydb_char_t* type
+    if (isoutput) {
+      preallocation = YDB_MAX_STR;  // always full size since YDB cannot check for overruns
+      if (length > preallocation) length = preallocation; // prevent writing past preallocation
+      param.char_ptr = add_malloc(M, preallocation+1); // +1 for null safety-terminator
+      if (isinput) {
+        memcpy(param.char_ptr, s, length); // also copy Lua's NUL safety-terminator
+        param.char_ptr[length] = '\0';  // make sure it's null-terminated somewhere
+      } else
+        param.char_ptr[0] = '\0'; // make it a blank string to start with if it's not an input
+    } else
+      param.char_ptr = s;
+}    break;
+  case YDB_BUFFER_T_PTR:
+{    size_t preallocation = ydb_type->preallocation;
+    if (preallocation==-1) preallocation=YDB_MAX_STR;
+    size_t length;
+    char *s = lua_tolstring(L, argi, &length);
+    if (!s) typeerror_cleanup(L, M, argi, "string");
+    // handle ydb_buffer_t* type
+    byref_slot *slot = get_slot(M);
+    param.buffer_ptr = &slot->buffer;
+    if (isoutput) {
+      if (length > preallocation) length = preallocation; // prevent writing past preallocation
+      slot->buffer.buf_addr = add_malloc(M, preallocation);
+      slot->buffer.len_alloc = preallocation;
+      slot->buffer.len_used = 0;
+      if (isinput) {
+        memcpy(slot->buffer.buf_addr, s, length);
         slot->buffer.len_used = length;
       }
     } else {
-        free_mallocs(M);
-        luaL_error(L, "M routine argument #%d has invalid type id %d supplied in M routine call-in specification", argi-3, type);
+      slot->buffer.buf_addr = s;
+      slot->buffer.len_alloc = length;
+      slot->buffer.len_used = length;
     }
+}    break;
 
-  } else {
-    // now handle number types
+  case YDB_LONG_T:
+    if (isinput) {
+      // handle long and int64
+      param.long_n = lua_tointegerx(L, argi, &success);
+      if (!success) typeerror_cleanup(L, M, argi, "integer");
+    } else
+      param.long_n = 0;
+    break;
+  case YDB_ULONG_T:
     if (isinput) {
       if (YDB_TYPE_ISINTEGRAL(type)) {
         // handle long and int64
@@ -194,6 +208,426 @@ static ydb_param cast2ydb(lua_State *L, int argi, type_spec *ydb_type, metadata 
       slot->param = param;
       param.any_ptr = &slot->param;
     }
+    break;
+  case YDB_INT_T:
+    if (isinput) {
+      if (YDB_TYPE_ISINTEGRAL(type)) {
+        // handle long and int64
+        param.long_n = lua_tointegerx(L, argi, &success);
+        if (!success) typeerror_cleanup(L, M, argi, "integer");
+        if (YDB_TYPE_IS32BIT(type)) {
+          // handle int32 (ydb_int_t is specifically 32-bits)
+          if (!YDB_TYPE_ISUNSIGNED(type) && (param.long_n > 0x7fffffffL || param.long_n < -0x80000000L))
+            typeerror_cleanup(L, M, argi, "number that will fit in 32-bit signed integer");
+          if (YDB_TYPE_ISUNSIGNED(type) && (param.long_n > 0xffffffffL || param.long_n < 0))
+            typeerror_cleanup(L, M, argi, "number that will fit in 32-bit unsigned integer");
+          param.int_n = param.long_n; // cast in case we're running big-endian which won't auto-cast
+        }
+      } else if (YDB_TYPE_ISREAL(type)) {
+        param.double_n = lua_tonumberx(L, argi, &success);
+        if (!success) typeerror_cleanup(L, M, argi, "number");
+        if (YDB_TYPE_IS32BIT(type)) {
+          param.float_n = param.double_n; // cast
+        }
+      }
+    } else
+      param.long_n = 0;
+    if (YDB_TYPE_ISPTR(type)) {
+      // If it's a pointer type, store the actual data in the next metadata slot, then make param point to it
+      byref_slot *slot = get_slot(M);
+      // TODO: confirm in assembler output that the next line is an efficient 64-bit value copy
+      slot->param = param;
+      param.any_ptr = &slot->param;
+    }
+    break;
+  case YDB_UINT_T:
+    if (isinput) {
+      if (YDB_TYPE_ISINTEGRAL(type)) {
+        // handle long and int64
+        param.long_n = lua_tointegerx(L, argi, &success);
+        if (!success) typeerror_cleanup(L, M, argi, "integer");
+        if (YDB_TYPE_IS32BIT(type)) {
+          // handle int32 (ydb_int_t is specifically 32-bits)
+          if (!YDB_TYPE_ISUNSIGNED(type) && (param.long_n > 0x7fffffffL || param.long_n < -0x80000000L))
+            typeerror_cleanup(L, M, argi, "number that will fit in 32-bit signed integer");
+          if (YDB_TYPE_ISUNSIGNED(type) && (param.long_n > 0xffffffffL || param.long_n < 0))
+            typeerror_cleanup(L, M, argi, "number that will fit in 32-bit unsigned integer");
+          param.int_n = param.long_n; // cast in case we're running big-endian which won't auto-cast
+        }
+      } else if (YDB_TYPE_ISREAL(type)) {
+        param.double_n = lua_tonumberx(L, argi, &success);
+        if (!success) typeerror_cleanup(L, M, argi, "number");
+        if (YDB_TYPE_IS32BIT(type)) {
+          param.float_n = param.double_n; // cast
+        }
+      }
+    } else
+      param.long_n = 0;
+    if (YDB_TYPE_ISPTR(type)) {
+      // If it's a pointer type, store the actual data in the next metadata slot, then make param point to it
+      byref_slot *slot = get_slot(M);
+      // TODO: confirm in assembler output that the next line is an efficient 64-bit value copy
+      slot->param = param;
+      param.any_ptr = &slot->param;
+    }
+    break;
+  case YDB_INT64_T:
+    if (isinput) {
+      if (YDB_TYPE_ISINTEGRAL(type)) {
+        // handle long and int64
+        param.long_n = lua_tointegerx(L, argi, &success);
+        if (!success) typeerror_cleanup(L, M, argi, "integer");
+        if (YDB_TYPE_IS32BIT(type)) {
+          // handle int32 (ydb_int_t is specifically 32-bits)
+          if (!YDB_TYPE_ISUNSIGNED(type) && (param.long_n > 0x7fffffffL || param.long_n < -0x80000000L))
+            typeerror_cleanup(L, M, argi, "number that will fit in 32-bit signed integer");
+          if (YDB_TYPE_ISUNSIGNED(type) && (param.long_n > 0xffffffffL || param.long_n < 0))
+            typeerror_cleanup(L, M, argi, "number that will fit in 32-bit unsigned integer");
+          param.int_n = param.long_n; // cast in case we're running big-endian which won't auto-cast
+        }
+      } else if (YDB_TYPE_ISREAL(type)) {
+        param.double_n = lua_tonumberx(L, argi, &success);
+        if (!success) typeerror_cleanup(L, M, argi, "number");
+        if (YDB_TYPE_IS32BIT(type)) {
+          param.float_n = param.double_n; // cast
+        }
+      }
+    } else
+      param.long_n = 0;
+    if (YDB_TYPE_ISPTR(type)) {
+      // If it's a pointer type, store the actual data in the next metadata slot, then make param point to it
+      byref_slot *slot = get_slot(M);
+      // TODO: confirm in assembler output that the next line is an efficient 64-bit value copy
+      slot->param = param;
+      param.any_ptr = &slot->param;
+    }
+    break;
+  case YDB_UINT64_T:
+    if (isinput) {
+      if (YDB_TYPE_ISINTEGRAL(type)) {
+        // handle long and int64
+        param.long_n = lua_tointegerx(L, argi, &success);
+        if (!success) typeerror_cleanup(L, M, argi, "integer");
+        if (YDB_TYPE_IS32BIT(type)) {
+          // handle int32 (ydb_int_t is specifically 32-bits)
+          if (!YDB_TYPE_ISUNSIGNED(type) && (param.long_n > 0x7fffffffL || param.long_n < -0x80000000L))
+            typeerror_cleanup(L, M, argi, "number that will fit in 32-bit signed integer");
+          if (YDB_TYPE_ISUNSIGNED(type) && (param.long_n > 0xffffffffL || param.long_n < 0))
+            typeerror_cleanup(L, M, argi, "number that will fit in 32-bit unsigned integer");
+          param.int_n = param.long_n; // cast in case we're running big-endian which won't auto-cast
+        }
+      } else if (YDB_TYPE_ISREAL(type)) {
+        param.double_n = lua_tonumberx(L, argi, &success);
+        if (!success) typeerror_cleanup(L, M, argi, "number");
+        if (YDB_TYPE_IS32BIT(type)) {
+          param.float_n = param.double_n; // cast
+        }
+      }
+    } else
+      param.long_n = 0;
+    if (YDB_TYPE_ISPTR(type)) {
+      // If it's a pointer type, store the actual data in the next metadata slot, then make param point to it
+      byref_slot *slot = get_slot(M);
+      // TODO: confirm in assembler output that the next line is an efficient 64-bit value copy
+      slot->param = param;
+      param.any_ptr = &slot->param;
+    }
+    break;
+  case YDB_FLOAT_T:
+    if (isinput) {
+      if (YDB_TYPE_ISINTEGRAL(type)) {
+        // handle long and int64
+        param.long_n = lua_tointegerx(L, argi, &success);
+        if (!success) typeerror_cleanup(L, M, argi, "integer");
+        if (YDB_TYPE_IS32BIT(type)) {
+          // handle int32 (ydb_int_t is specifically 32-bits)
+          if (!YDB_TYPE_ISUNSIGNED(type) && (param.long_n > 0x7fffffffL || param.long_n < -0x80000000L))
+            typeerror_cleanup(L, M, argi, "number that will fit in 32-bit signed integer");
+          if (YDB_TYPE_ISUNSIGNED(type) && (param.long_n > 0xffffffffL || param.long_n < 0))
+            typeerror_cleanup(L, M, argi, "number that will fit in 32-bit unsigned integer");
+          param.int_n = param.long_n; // cast in case we're running big-endian which won't auto-cast
+        }
+      } else if (YDB_TYPE_ISREAL(type)) {
+        param.double_n = lua_tonumberx(L, argi, &success);
+        if (!success) typeerror_cleanup(L, M, argi, "number");
+        if (YDB_TYPE_IS32BIT(type)) {
+          param.float_n = param.double_n; // cast
+        }
+      }
+    } else
+      param.long_n = 0;
+    if (YDB_TYPE_ISPTR(type)) {
+      // If it's a pointer type, store the actual data in the next metadata slot, then make param point to it
+      byref_slot *slot = get_slot(M);
+      // TODO: confirm in assembler output that the next line is an efficient 64-bit value copy
+      slot->param = param;
+      param.any_ptr = &slot->param;
+    }
+    break;
+  case YDB_DOUBLE_T:
+    if (isinput) {
+      if (YDB_TYPE_ISINTEGRAL(type)) {
+        // handle long and int64
+        param.long_n = lua_tointegerx(L, argi, &success);
+        if (!success) typeerror_cleanup(L, M, argi, "integer");
+        if (YDB_TYPE_IS32BIT(type)) {
+          // handle int32 (ydb_int_t is specifically 32-bits)
+          if (!YDB_TYPE_ISUNSIGNED(type) && (param.long_n > 0x7fffffffL || param.long_n < -0x80000000L))
+            typeerror_cleanup(L, M, argi, "number that will fit in 32-bit signed integer");
+          if (YDB_TYPE_ISUNSIGNED(type) && (param.long_n > 0xffffffffL || param.long_n < 0))
+            typeerror_cleanup(L, M, argi, "number that will fit in 32-bit unsigned integer");
+          param.int_n = param.long_n; // cast in case we're running big-endian which won't auto-cast
+        }
+      } else if (YDB_TYPE_ISREAL(type)) {
+        param.double_n = lua_tonumberx(L, argi, &success);
+        if (!success) typeerror_cleanup(L, M, argi, "number");
+        if (YDB_TYPE_IS32BIT(type)) {
+          param.float_n = param.double_n; // cast
+        }
+      }
+    } else
+      param.long_n = 0;
+    if (YDB_TYPE_ISPTR(type)) {
+      // If it's a pointer type, store the actual data in the next metadata slot, then make param point to it
+      byref_slot *slot = get_slot(M);
+      // TODO: confirm in assembler output that the next line is an efficient 64-bit value copy
+      slot->param = param;
+      param.any_ptr = &slot->param;
+    }
+    break;
+  case YDB_LONG_T_PTR:
+    if (isinput) {
+      // handle long and int64
+      param.long_n = lua_tointegerx(L, argi, &success);
+      if (!success) typeerror_cleanup(L, M, argi, "integer");
+    } else
+      param.long_n = 0;
+    // If it's a pointer type, store the actual data in the next metadata slot, then make param point to it
+    byref_slot *slot = get_slot(M);
+    // TODO: confirm in assembler output that the next line is an efficient 64-bit value copy
+    slot->param = param;
+    param.any_ptr = &slot->param;
+    break;
+  case YDB_ULONG_T_PTR:
+    if (isinput) {
+      if (YDB_TYPE_ISINTEGRAL(type)) {
+        // handle long and int64
+        param.long_n = lua_tointegerx(L, argi, &success);
+        if (!success) typeerror_cleanup(L, M, argi, "integer");
+        if (YDB_TYPE_IS32BIT(type)) {
+          // handle int32 (ydb_int_t is specifically 32-bits)
+          if (!YDB_TYPE_ISUNSIGNED(type) && (param.long_n > 0x7fffffffL || param.long_n < -0x80000000L))
+            typeerror_cleanup(L, M, argi, "number that will fit in 32-bit signed integer");
+          if (YDB_TYPE_ISUNSIGNED(type) && (param.long_n > 0xffffffffL || param.long_n < 0))
+            typeerror_cleanup(L, M, argi, "number that will fit in 32-bit unsigned integer");
+          param.int_n = param.long_n; // cast in case we're running big-endian which won't auto-cast
+        }
+      } else if (YDB_TYPE_ISREAL(type)) {
+        param.double_n = lua_tonumberx(L, argi, &success);
+        if (!success) typeerror_cleanup(L, M, argi, "number");
+        if (YDB_TYPE_IS32BIT(type)) {
+          param.float_n = param.double_n; // cast
+        }
+      }
+    } else
+      param.long_n = 0;
+    if (YDB_TYPE_ISPTR(type)) {
+      // If it's a pointer type, store the actual data in the next metadata slot, then make param point to it
+      byref_slot *slot = get_slot(M);
+      // TODO: confirm in assembler output that the next line is an efficient 64-bit value copy
+      slot->param = param;
+      param.any_ptr = &slot->param;
+    }
+    break;
+  case YDB_INT_T_PTR:
+    if (isinput) {
+      if (YDB_TYPE_ISINTEGRAL(type)) {
+        // handle long and int64
+        param.long_n = lua_tointegerx(L, argi, &success);
+        if (!success) typeerror_cleanup(L, M, argi, "integer");
+        if (YDB_TYPE_IS32BIT(type)) {
+          // handle int32 (ydb_int_t is specifically 32-bits)
+          if (!YDB_TYPE_ISUNSIGNED(type) && (param.long_n > 0x7fffffffL || param.long_n < -0x80000000L))
+            typeerror_cleanup(L, M, argi, "number that will fit in 32-bit signed integer");
+          if (YDB_TYPE_ISUNSIGNED(type) && (param.long_n > 0xffffffffL || param.long_n < 0))
+            typeerror_cleanup(L, M, argi, "number that will fit in 32-bit unsigned integer");
+          param.int_n = param.long_n; // cast in case we're running big-endian which won't auto-cast
+        }
+      } else if (YDB_TYPE_ISREAL(type)) {
+        param.double_n = lua_tonumberx(L, argi, &success);
+        if (!success) typeerror_cleanup(L, M, argi, "number");
+        if (YDB_TYPE_IS32BIT(type)) {
+          param.float_n = param.double_n; // cast
+        }
+      }
+    } else
+      param.long_n = 0;
+    if (YDB_TYPE_ISPTR(type)) {
+      // If it's a pointer type, store the actual data in the next metadata slot, then make param point to it
+      byref_slot *slot = get_slot(M);
+      // TODO: confirm in assembler output that the next line is an efficient 64-bit value copy
+      slot->param = param;
+      param.any_ptr = &slot->param;
+    }
+    break;
+  case YDB_UINT_T_PTR:
+    if (isinput) {
+      if (YDB_TYPE_ISINTEGRAL(type)) {
+        // handle long and int64
+        param.long_n = lua_tointegerx(L, argi, &success);
+        if (!success) typeerror_cleanup(L, M, argi, "integer");
+        if (YDB_TYPE_IS32BIT(type)) {
+          // handle int32 (ydb_int_t is specifically 32-bits)
+          if (!YDB_TYPE_ISUNSIGNED(type) && (param.long_n > 0x7fffffffL || param.long_n < -0x80000000L))
+            typeerror_cleanup(L, M, argi, "number that will fit in 32-bit signed integer");
+          if (YDB_TYPE_ISUNSIGNED(type) && (param.long_n > 0xffffffffL || param.long_n < 0))
+            typeerror_cleanup(L, M, argi, "number that will fit in 32-bit unsigned integer");
+          param.int_n = param.long_n; // cast in case we're running big-endian which won't auto-cast
+        }
+      } else if (YDB_TYPE_ISREAL(type)) {
+        param.double_n = lua_tonumberx(L, argi, &success);
+        if (!success) typeerror_cleanup(L, M, argi, "number");
+        if (YDB_TYPE_IS32BIT(type)) {
+          param.float_n = param.double_n; // cast
+        }
+      }
+    } else
+      param.long_n = 0;
+    if (YDB_TYPE_ISPTR(type)) {
+      // If it's a pointer type, store the actual data in the next metadata slot, then make param point to it
+      byref_slot *slot = get_slot(M);
+      // TODO: confirm in assembler output that the next line is an efficient 64-bit value copy
+      slot->param = param;
+      param.any_ptr = &slot->param;
+    }
+    break;
+  case YDB_INT64_T_PTR:
+    if (isinput) {
+      if (YDB_TYPE_ISINTEGRAL(type)) {
+        // handle long and int64
+        param.long_n = lua_tointegerx(L, argi, &success);
+        if (!success) typeerror_cleanup(L, M, argi, "integer");
+        if (YDB_TYPE_IS32BIT(type)) {
+          // handle int32 (ydb_int_t is specifically 32-bits)
+          if (!YDB_TYPE_ISUNSIGNED(type) && (param.long_n > 0x7fffffffL || param.long_n < -0x80000000L))
+            typeerror_cleanup(L, M, argi, "number that will fit in 32-bit signed integer");
+          if (YDB_TYPE_ISUNSIGNED(type) && (param.long_n > 0xffffffffL || param.long_n < 0))
+            typeerror_cleanup(L, M, argi, "number that will fit in 32-bit unsigned integer");
+          param.int_n = param.long_n; // cast in case we're running big-endian which won't auto-cast
+        }
+      } else if (YDB_TYPE_ISREAL(type)) {
+        param.double_n = lua_tonumberx(L, argi, &success);
+        if (!success) typeerror_cleanup(L, M, argi, "number");
+        if (YDB_TYPE_IS32BIT(type)) {
+          param.float_n = param.double_n; // cast
+        }
+      }
+    } else
+      param.long_n = 0;
+    if (YDB_TYPE_ISPTR(type)) {
+      // If it's a pointer type, store the actual data in the next metadata slot, then make param point to it
+      byref_slot *slot = get_slot(M);
+      // TODO: confirm in assembler output that the next line is an efficient 64-bit value copy
+      slot->param = param;
+      param.any_ptr = &slot->param;
+    }
+    break;
+  case YDB_UINT64_T_PTR:
+    if (isinput) {
+      if (YDB_TYPE_ISINTEGRAL(type)) {
+        // handle long and int64
+        param.long_n = lua_tointegerx(L, argi, &success);
+        if (!success) typeerror_cleanup(L, M, argi, "integer");
+        if (YDB_TYPE_IS32BIT(type)) {
+          // handle int32 (ydb_int_t is specifically 32-bits)
+          if (!YDB_TYPE_ISUNSIGNED(type) && (param.long_n > 0x7fffffffL || param.long_n < -0x80000000L))
+            typeerror_cleanup(L, M, argi, "number that will fit in 32-bit signed integer");
+          if (YDB_TYPE_ISUNSIGNED(type) && (param.long_n > 0xffffffffL || param.long_n < 0))
+            typeerror_cleanup(L, M, argi, "number that will fit in 32-bit unsigned integer");
+          param.int_n = param.long_n; // cast in case we're running big-endian which won't auto-cast
+        }
+      } else if (YDB_TYPE_ISREAL(type)) {
+        param.double_n = lua_tonumberx(L, argi, &success);
+        if (!success) typeerror_cleanup(L, M, argi, "number");
+        if (YDB_TYPE_IS32BIT(type)) {
+          param.float_n = param.double_n; // cast
+        }
+      }
+    } else
+      param.long_n = 0;
+    if (YDB_TYPE_ISPTR(type)) {
+      // If it's a pointer type, store the actual data in the next metadata slot, then make param point to it
+      byref_slot *slot = get_slot(M);
+      // TODO: confirm in assembler output that the next line is an efficient 64-bit value copy
+      slot->param = param;
+      param.any_ptr = &slot->param;
+    }
+    break;
+  case YDB_FLOAT_T_PTR:
+    if (isinput) {
+      if (YDB_TYPE_ISINTEGRAL(type)) {
+        // handle long and int64
+        param.long_n = lua_tointegerx(L, argi, &success);
+        if (!success) typeerror_cleanup(L, M, argi, "integer");
+        if (YDB_TYPE_IS32BIT(type)) {
+          // handle int32 (ydb_int_t is specifically 32-bits)
+          if (!YDB_TYPE_ISUNSIGNED(type) && (param.long_n > 0x7fffffffL || param.long_n < -0x80000000L))
+            typeerror_cleanup(L, M, argi, "number that will fit in 32-bit signed integer");
+          if (YDB_TYPE_ISUNSIGNED(type) && (param.long_n > 0xffffffffL || param.long_n < 0))
+            typeerror_cleanup(L, M, argi, "number that will fit in 32-bit unsigned integer");
+          param.int_n = param.long_n; // cast in case we're running big-endian which won't auto-cast
+        }
+      } else if (YDB_TYPE_ISREAL(type)) {
+        param.double_n = lua_tonumberx(L, argi, &success);
+        if (!success) typeerror_cleanup(L, M, argi, "number");
+        if (YDB_TYPE_IS32BIT(type)) {
+          param.float_n = param.double_n; // cast
+        }
+      }
+    } else
+      param.long_n = 0;
+    if (YDB_TYPE_ISPTR(type)) {
+      // If it's a pointer type, store the actual data in the next metadata slot, then make param point to it
+      byref_slot *slot = get_slot(M);
+      // TODO: confirm in assembler output that the next line is an efficient 64-bit value copy
+      slot->param = param;
+      param.any_ptr = &slot->param;
+    }
+    break;
+  case YDB_DOUBLE_T_PTR:
+    if (isinput) {
+      if (YDB_TYPE_ISINTEGRAL(type)) {
+        // handle long and int64
+        param.long_n = lua_tointegerx(L, argi, &success);
+        if (!success) typeerror_cleanup(L, M, argi, "integer");
+        if (YDB_TYPE_IS32BIT(type)) {
+          // handle int32 (ydb_int_t is specifically 32-bits)
+          if (!YDB_TYPE_ISUNSIGNED(type) && (param.long_n > 0x7fffffffL || param.long_n < -0x80000000L))
+            typeerror_cleanup(L, M, argi, "number that will fit in 32-bit signed integer");
+          if (YDB_TYPE_ISUNSIGNED(type) && (param.long_n > 0xffffffffL || param.long_n < 0))
+            typeerror_cleanup(L, M, argi, "number that will fit in 32-bit unsigned integer");
+          param.int_n = param.long_n; // cast in case we're running big-endian which won't auto-cast
+        }
+      } else if (YDB_TYPE_ISREAL(type)) {
+        param.double_n = lua_tonumberx(L, argi, &success);
+        if (!success) typeerror_cleanup(L, M, argi, "number");
+        if (YDB_TYPE_IS32BIT(type)) {
+          param.float_n = param.double_n; // cast
+        }
+      }
+    } else
+      param.long_n = 0;
+    if (YDB_TYPE_ISPTR(type)) {
+      // If it's a pointer type, store the actual data in the next metadata slot, then make param point to it
+      byref_slot *slot = get_slot(M);
+      // TODO: confirm in assembler output that the next line is an efficient 64-bit value copy
+      slot->param = param;
+      param.any_ptr = &slot->param;
+    }
+    break;
+  default:
+    free_mallocs(M);
+    luaL_error(L, "M routine argument #%d has invalid type id %d supplied in M routine call-in specification", argi-3, type);
   }
 
   // TODO: confirm in assembler output that compiler returns an efficient single 64-bit value for param
