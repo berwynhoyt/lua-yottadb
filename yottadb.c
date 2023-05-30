@@ -53,6 +53,14 @@ int _memory_error(size_t size, int line, char *file) {
   _varname = &___cachearray->varname; \
   _subsarray = &___cachearray->subs[0];
 
+// Note: getsubs_fast assumes a non-deferred cachearray as input
+// it can be used with previous/next_subscript which are only ever called with cachearrays
+#define getsubs_fast(L,_subs_used,_varname,_subsarray) \
+  cachearray_t *___cachearray = lua_touserdata(L, 1); \
+  _subs_used = ___cachearray->depth; \
+  _varname = &___cachearray->varname; \
+  _subsarray = &___cachearray->subs[0];
+
 const char *LUA_YDB_ERR_PREFIX = "YDB Error: ";
 
 // Returns an error message to match the supplied YDB error code
@@ -370,7 +378,7 @@ typedef int (*subscript_actuator_t) (const ydb_buffer_t *varname, int subs_used,
 static int subscript_nexter(lua_State *L, subscript_actuator_t actuator) {
   int subs_used;
   ydb_buffer_t *varname, *subsarray;
-  getsubs(L, subs_used, varname, subsarray);
+  getsubs_fast(L, subs_used, varname, subsarray);
 
   ydb_buffer_t ret_value;
   YDB_MALLOC_BUFFER_SAFE(&ret_value, LUA_YDB_BUFSIZ);
@@ -390,8 +398,8 @@ static int subscript_nexter(lua_State *L, subscript_actuator_t actuator) {
 }
 
 /// Returns the next subscript for a variable/node.
+// Note: for speed, this may only be called with a cachearray
 // @function subscript_next
-// @usage _yottadb.subscript_next(varname[, {subs} | ...]),  or:
 // @usage _yottadb.subscript_next(cachearray)
 // @param varname string
 // @param[opt] subs table of subscripts
@@ -402,8 +410,8 @@ static int subscript_next(lua_State *L) {
 }
 
 /// Returns the previous subscript for a variable/node.
+// Note: for speed, this may only be called with a cachearray
 // @function subscript_previous
-// @usage _yottadb.subscript_previous(varname[, {subs} | ...]),  or:
 // @usage _yottadb.subscript_previous(cachearray)
 // @param varname string
 // @param[opt] subs table of subscripts
