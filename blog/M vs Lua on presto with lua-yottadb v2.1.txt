@@ -1,0 +1,4 @@
+bhoyt@presto:~/mlua/benchmarks$ LUA_PATH="../?.lua;$LUA_PATH" LUA_CPATH="../?.so;$LUA_CPATH" yottadb -run presto
+/library/mumps/brocade/g/glo.gld
+M   ^BCAT("lvd") traversal of 4640630 subscripts in 4,784.9ms (process CPU time) 4,794.4ms (real time)
+Lua ^BCAT("lvd") traversal of 4640630 subscripts in 6,168.8ms (process CPU time) 6,180.5ms (real time)
