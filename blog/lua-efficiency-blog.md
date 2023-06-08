@@ -30,7 +30,7 @@ The program above simply loops through a sequence of 5 million database nodes wi
 ^BCAT("lvd")(3) ...
 ```
 
-To do so took 20 seconds in Lua, and 5 seconds [in M](https://github.com/berwynhoyt/lua-yottadb/blob/blog/blog/zadloop.m). A quick code review of [lua-yottadb](https://github.com/anet-be/lua-yottadb) (the database access layer of MLua) found a number of low-hanging fruit in the `gref1:subscripts()` method above. The issues were that for every loop iteration, `gref1:subscripts()` did this:
+To do so took 20 seconds in Lua, and 5 seconds [in M](https://github.com/berwynhoyt/lua-yottadb/blob/blog_efficiency/blog/zadloop.m). A quick code review of [lua-yottadb](https://github.com/anet-be/lua-yottadb) (the database access layer of MLua) found a number of low-hanging fruit in the `gref1:subscripts()` method above. The issues were that for every loop iteration, `gref1:subscripts()` did this:
 
 1. Checked each subscript in the node's 'path' at the Lua level to make sure it was a valid string.
 2. Checked each subscript again at the C level.
@@ -222,13 +222,13 @@ In theory, my final `cachearray.c` is the best version to port to another langua
 
 A quick look at Python's YDBPython, for example, shows that its C code has the same design as the original lua-yottadb – and is probably slow. Every time it accesses the database, it has to verify your subscript list, and copy each string to C. Unlike lua-yottadb, YDBPython also does an additional malloc for each individual subscript string. Caching the subscript array could provide a significant speedup, just as it did for Lua.
 
-The Python code to create an object also has the same low-hanging fruit as lua-yottadb. But YDBPython has an additional easy one-line win by using `__slots__`, a [Python feature](https://wiki.python.org/moin/UsingSlots) not available in Lua. A [quick benchmark](https://github.com/berwynhoyt/lua-yottadb/blob/blog/blog/object_creation.py) tells me that using `__slots__` makes python bare object creation 20% faster (though it needs another 25% to be as fast as [Lua's object creation](https://github.com/berwynhoyt/lua-yottadb/blob/blog/blog/object_creation.lua) using `userdata`).
+The Python code to create an object also has the same low-hanging fruit as lua-yottadb. But YDBPython has an additional easy one-line win by using `__slots__`, a [Python feature](https://wiki.python.org/moin/UsingSlots) not available in Lua. A [quick benchmark](https://github.com/berwynhoyt/lua-yottadb/blob/blog_efficiency/blog/object_creation.py) tells me that using `__slots__` makes python bare object creation 20% faster (though it needs another 25% to be as fast as [Lua's object creation](https://github.com/berwynhoyt/lua-yottadb/blob/blog_efficiency/blog/object_creation.lua) using `userdata`).
 
 At this stage I do not know much about Python's C API: neither about Python's alternatives to `userdata` objects, nor whether Python has a faster way of implementing dot notation without creating intermediate nodes.
 
 ## YDB API overhead: a suggestion
 
-After all this work, why is M still faster? I suspect that lua-yottadb is now about as fast as it can get. So why is database traversal in Lua still 1.3 times slower than M (on our server), when a basic for-loop in [Lua](https://github.com/berwynhoyt/lua-yottadb/blob/blog/blog/forloop.lua) is 17x faster than in [M](https://github.com/berwynhoyt/lua-yottadb/blob/blog/blog/forloop.m)? My hunch was that there are subscript conversion overheads on the M side of the M-C API, that M doesn't need to incur since it's a built-in language. I had a chat to [Bhaskar](https://gitlab.com/ksbhaskar), founder of YottaDB, and he was able to confirm my hunch, as follows.
+After all this work, why is M still faster? I suspect that lua-yottadb is now about as fast as it can get. So why is database traversal in Lua still 1.3 times slower than M (on our server), when a basic for-loop in [Lua](https://github.com/berwynhoyt/lua-yottadb/blob/blog_efficiency/blog/forloop.lua) is 17x faster than in [M](https://github.com/berwynhoyt/lua-yottadb/blob/blog_efficiency/blog/forloop.m)? My hunch was that there are subscript conversion overheads on the M side of the M-C API, that M doesn't need to incur since it's a built-in language. I had a chat to [Bhaskar](https://gitlab.com/ksbhaskar), founder of YottaDB, and he was able to confirm my hunch, as follows.
 
 YDB keeps its values in what it calls 'mvals'. This is a C struct that can store multiple representations of the same value (number and string), with a bitfield that tells the system which representations are stored. When a value is needed in a new representation, it is converted and stored in the mval. This prevents repeated conversion between representations. However, since the C API does not expose mvals, conversion can add overhead to both the call and the return.
 
