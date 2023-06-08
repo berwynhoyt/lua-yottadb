@@ -19,7 +19,7 @@ cnt = 0  for x in gref1:subscripts() do  cnt=cnt+1  end
 print("total of " .. cnt .. " records")
 ```
 
-> If you're new to M, to understand what's going on, you need to know that M database nodes are represented by a series of 'subscript' strings, just like a file-system path. Whereas a path might be `root/var/log/file`, an M node would be `root("var","log","nodename")` or `root.var.log.nodename`. Just like in a file-system, each node can hold a bit of data, or further sub-nodes.
+> If you're new to M, to understand what's going on, you need to know that M database nodes are represented by a series of 'subscript' strings, just like a file-system path. Whereas a path might be `root/var/log/file`, an M node would be `root("var","log","nodename")` or `root.var.log.nodename`. Just like a file-system, each node can hold a bit of data, further sub-nodes, or both.
 
 The program above simply loops through a sequence of 5 million database nodes with subscripts `^BCAT.lvd.<n>` like so:
 
@@ -48,17 +48,17 @@ But what if we wanted to improve every single database operation, not just itera
 As an example of the latter, let's create a Lua-database object:
 
 ```lua
-guy = ydb.node('demographics').country.person.3
+guy = ydb.node('demographics').country.person[3]
 ```
 
 We can do all kinds of database activities on that node, for example: `node:lock_incr()   node:set('Fred')  node:lock_decr()` or even set create subnodes:
 
 ```lua
 guy.gender:set('male')
-guy.genetics.chomozome:set('X')
+guy.genetics.chomosome:set('X')
 ```
 
-Each '.' above creates a new Lua subnode object (in this case, `genetics` and then `chromozome`) before you can finally set it to 'X'. You can imagine that a Lua programmer will be doing a lot of this, so it's a critical task: we need to optimise node creation.
+Each '.' above creates a new Lua subnode object (in this case, `genetics` and then `chromosome`) before you can finally set it to 'X'. You can imagine that a Lua programmer will be doing a lot of this, so it's a critical task: we need to optimise node creation.
 
 To achieve this we needed to find the 'Holy Grail': ***fast creation*** of ***cached C arrays***. That would extend these benefits to *every* database function.
 
@@ -77,7 +77,7 @@ node = {
 }
 ```
 
-Be aware that creating a table in Lua is slow compared to a C array: it requires a malloc, linkage into the Lua garbage collector, a hash table, and creation of a numerical array portion. And here we need *two* of them (one for the node object itself, and another for the `__subsarray`). So its relatively slow. But at this point I didn't know that this was the speed hog.
+Be aware that creating a table in Lua is slow compared to a C array: it requires a malloc, linkage into the Lua garbage collector, a hash table, and creation of a numerical array portion. And here we need *two* of them (one for the node object itself, and another for the `__subsarray`). So it's relatively slow. But at this point I didn't know that this was the speed hog.
 
 ### Iteration 1: An array of strings
 
@@ -89,7 +89,7 @@ node.__cachearray = cachearray_create("demographics", "country", "person", "3", 
 
 Since Lua already referenced the strings in `__subsarray` (presented previously), my function `cachearray_create()` just had to allocate space for it: `malloc(depth * string_pointers)`, and point them to the strings *already existing in Lua*. But this would mean I had to retain the `__subsarray` table to reference these strings and prevent Lua from garbage-collecting them while in use by C.
 
-Although this caching would speed up node re-use, adding `__cachearray` to the node would actually *slow down* node creation time. To prevent the slow-down, I noticed that each child node repeats all its parent's subscripts. So I saved both memory and time, by making each child node object contain only their own rightmost subscript `__name` and point to `__parent` for the rest:
+Although this caching would speed up node re-use, adding `__cachearray` to the node would actually *slow down* node creation time. To prevent the slow-down, I noticed that each child node repeats all its parent's subscripts. So I saved both memory and time, by making each child node object contain only its own rightmost subscript `__name` and point to `__parent` for the rest:
 
 ```lua
 node = {
@@ -121,7 +121,7 @@ Well, it worked. Now we have a lightning-fast iterator, and in most cases the pr
 
 #### Garbage collection & Lua versions
 
-All that remained was tell Lua's garbage collector about my mallocs. In Lua 5.4 this would have been easy: just add node method `__gc = cachearray_free` to the object. But `__gc` doesn't work, in Lua 5.1, on tables (which is what our node object is), and we wanted lua-yottadb to support Lua 5.1 since LuaJIT is stuck on the Lua 5.1 interface – so some people still use Lua 5.1. Instead of simply setting `__gc = cachearray_free`, I had to allocate memory using Lua's "full userdata" type, which is slower than malloc, but at least it provides memory that is managed by Lua's garbage collector.[^5.1garbage]
+All that remained was to tell Lua's garbage collector about my mallocs. In Lua 5.4 this would have been easy: just add node method `__gc = cachearray_free` to the object. But `__gc` doesn't work, in Lua 5.1, on tables (which is what our node object is), and we wanted lua-yottadb to support Lua 5.1 since LuaJIT is stuck on the Lua 5.1 interface – so some people still use Lua 5.1. Instead of simply setting `__gc = cachearray_free`, I had to allocate memory using Lua's "full userdata" type, which is slower than malloc, but at least it provides memory that is managed by Lua's garbage collector.[^5.1garbage]
 
 Lastly, I made some unit tests, and I thought I'd be done. But node creation wasn't really any faster.
 
@@ -129,7 +129,7 @@ Lastly, I made some unit tests, and I thought I'd be done. But node creation was
 
 At this stage I'd already spent 12 days: over twice as long as I'd anticipated. That's not too outrageous for a new concept design. Strictly, I should have told my employer that I was over-budget, so they could make the call on further development. But I was embarrassed that my node creation benchmark was not really faster than the original. We had fast iteration now, but I had anticipated that everything would be faster. Something was wrong, and I decided to just knuckle down and find it.
 
-At this point I made a mistaken judgement-call that cost development time. I guessed (incorrectly) that the speed issues were because each node creation had to copy its parent's array of string pointers. Instead of verifying my theory, I implemented a fix, adding complexity as follows.
+At this point I made a mistaken judgment-call that cost development time. I guessed (incorrectly) that the speed issues were because each node creation had to copy its parent's array of string pointers. Instead of verifying my theory, I implemented a fix, adding complexity as follows.
 
 Each child node retained a duplicate copy of the entire C array of string-pointer structs. But this seemed unnecessary since each child added only one subscript string at the end. Let's keep just one copy of the C array and have **each child** node reference the same array but keep its specific **depth** as follows:
 
@@ -146,8 +146,6 @@ This works, but adds some complexity, because if you create alternate subscript 
 
 Although it does speed up node creation, it's still not as much as expected, because it's also slowing down node creation simply by adding the __depth field to the object.[^closure_trial]
 
-[^closure_trial]: At this point I tried to store the `__depth` in C by using what Lua calls a 'C closure'. What I didn't realise is that although a normal Lua closure can have Lua locals for each instance of a function a C closure is different: it can only store one set of locals for the entire C library. This didn't let me store `__depth` against each node object at all. So that was a wasted attempt.
-
 ### Iteration 3: A breakthrough - the complete object in C
 
 Up to this point I had been assuming I needed a Lua table to create a Lua object. After all, it seemed so efficient to make C just point to the existing Lua strings; and for that I needed Lua to reference those strings: hence a Lua table.
@@ -160,10 +158,10 @@ Implementing this, my `userdata` C struct now looks something like this:
 
 ```C
 typedef struct cachearray_t {
-  int subsdata_alloc;   // size allocated for subscript strings after subs_array
-  short depth_alloc;    // number of array items space was pre-allocated for
+  int subsdata_alloc;   // size allocated for strings (last element)
+  short depth_alloc;    // number of pre-allocated array items
   short depth_used;     // number of used items in array
-  ydb_buffer_t subs_array[]; // subs stored here, then reallocated if it grows too much
+  ydb_buffer_t subs_array[]; // struct reallocated if this exceeded
   char subsdata[];
 } cachearray_t;
 ```
@@ -201,9 +199,9 @@ typedef struct cachearray_t {
     ...
 ```
 
-This will finally make full use of that mistaken judgement-call I made early on, and re-use pre-allocation to ultimate effect.
+This will finally make full use of that mistaken judgment-call I made early on, and re-use pre-allocation to ultimate effect.
 
-But there's a gotcha. Since a `light userdata` object has no storage, Lua doesn't know what type of data it is, and therefore what metatable (i.e. object methods) to associate with it. So there's a single global metatable for all `light userdata` objects. No matter: we can still hook the global metatable, and then double-check ourselves that it points to a cache-array, before running cachearray class methods on it. Should work fine.
+But there's a gotcha. Since a `light userdata` object has no storage, Lua doesn't know what type of data it is, and therefore what metatable (i.e. object methods) to associate with it. So there's a single global metatable for all `light userdata` objects. No matter: we can still hook the global metatable, and then double-check ourselves that it points to a cache-array, before running cache-array class methods on it. Should work fine.
 
 Node creation time in lua-yottadb v2.1 is already 47x faster than v1.2. I'm anticipating this improvement will increase that to 200x, making dot notation virtually free. This will also keep all allocated memory together in one place: also better for CPU caching.
 
@@ -230,7 +228,7 @@ At this stage I do not know much about Python's C API: neither about Python's al
 
 ## YDB API overhead: a suggestion
 
-After all this work, why is M still faster? I suspect that Lua-yottadb is now about as fast as it can get. So why is database traversal in Lua still 1.3 times slower than M (on our server), when a basic for-loop in [Lua](https://github.com/berwynhoyt/lua-yottadb/blob/blog/blog/forloop.lua) is 17x faster than in [M](https://github.com/berwynhoyt/lua-yottadb/blob/blog/blog/forloop.m)? My hunch was that there are subscript conversion overheads on the M side of the M-C API, that M doesn't need to incur since it's a built-in language. I had a chat to [Bhaskar](https://gitlab.com/ksbhaskar), founder of Yottadb, and he was able to confirm my hunch, as follows.
+After all this work, why is M still faster? I suspect that lua-yottadb is now about as fast as it can get. So why is database traversal in Lua still 1.3 times slower than M (on our server), when a basic for-loop in [Lua](https://github.com/berwynhoyt/lua-yottadb/blob/blog/blog/forloop.lua) is 17x faster than in [M](https://github.com/berwynhoyt/lua-yottadb/blob/blog/blog/forloop.m)? My hunch was that there are subscript conversion overheads on the M side of the M-C API, that M doesn't need to incur since it's a built-in language. I had a chat to [Bhaskar](https://gitlab.com/ksbhaskar), founder of YottaDB, and he was able to confirm my hunch, as follows.
 
 YDB keeps its values in what it calls 'mvals'. This is a C struct that can store multiple representations of the same value (number and string), with a bitfield that tells the system which representations are stored. When a value is needed in a new representation, it is converted and stored in the mval. This prevents repeated conversion between representations. However, since the C API does not expose mvals, conversion can add overhead to both the call and the return.
 
@@ -250,13 +248,13 @@ Of course, this is just a theory. Profiling would first be needed to check wheth
 
 Perhaps most significantly, this article raises some of the significant issues that efficiency improvements in any language will have to work through. Hopefully, this will allow someone to implement it in iteration 1, rather than iteration 3.
 
-Here are a few other take-homes from these experiences:
+Here are a few other take-homes from this experience:
 
 - Always test your theories about what's causing the slow-down before implementing a complete fix.
-- Communicate with your employer early, even if its embarrassing: even the reporting process might expose your assumptions. (I knew this already, but pride got in the way:flushed:).
+- Communicate with your employer early, even if it's embarrassing: even the reporting process might expose your assumptions. (I knew this already, but pride got in the way:flushed:).
 - Useful details about implementing a Lua library in C: speedy userdata, light userdata, and Valgrind for emergencies.
 
-I sure learned a lot through this process, and I hope you've learned something, too.
+I sure did learn a lot through this process, and I hope you've learned something, too.
 
 ---
 
@@ -264,5 +262,6 @@ I sure learned a lot through this process, and I hope you've learned something, 
 
 [^mutable]: Worse, when we later introduce cache-array shared with parent nodes, if you create a sub-node out of it and store that, then your sub-node's parent subscript will get changed, since it uses the same cache-array.
 [^5.1garbage]: Incidentally, this should have been a clue to use the `userdata` type for the object itself *instead of* a Lua table, because `__gc` *does* work on `userdata`, in Lua 5.1. But I didn't get there until iteration 3. At this stage, since Lua 5.1 `userdata` cannot reference Lua values, I was locked into thinking we still needed a Lua table to store Lua references to the subscript strings. Ironically, iteration 3 also required me to implement my own mechanism for `userdata` to reference Lua values so that the dereferenced 
+[^closure_trial]: At this point I tried to store the `__depth` in C by using what Lua calls a 'C closure'. What I didn't realise is that although a normal Lua closure can have Lua locals for each instance of a function a C closure is different: it can only store one set of locals for the entire C library. This didn't let me store `__depth` against each node object at all. So that was a wasted attempt.
 [^lua_dereference]: Child nodes also need to Lua-reference their parent to avoid it being garbage collected while they're pointing to it. Ironically, iteration 3 thus required me to implement what I avoided in iteration 1: a way for Lua 5.1 `userdata` to reference Lua values.
 
