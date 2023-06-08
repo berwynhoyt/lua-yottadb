@@ -11,8 +11,15 @@ int userdata(lua_State *L) {
   return 1;
 }
 
+int lightuserdata(lua_State *L) {
+  static int x;
+  lua_pushlightuserdata(L, (void*)&x);
+  return 1;
+}
+
 static const luaL_Reg c_functions[] = {
   {"userdata", userdata},
+  {"lightuserdata", lightuserdata},
   {NULL, NULL},
 };
 
