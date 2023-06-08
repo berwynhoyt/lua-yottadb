@@ -12,7 +12,3 @@ def f():
         o = Obj('a').b.c.e.f.g.h.i.j.k.l.m.n.o.p.q.r.s.t.u.v.w.x.y.z
 
 f()
-
-#~ o = Obj('a').b.c.e.f.g.h.i.j.k.l.m.n.o.p.q.r.s.t.u.v.w.x.y.z
-#~ print(o._name)
-#~ print(o._parent._name)

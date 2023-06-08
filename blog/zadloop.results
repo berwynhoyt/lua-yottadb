@@ -1,0 +1,27 @@
+# lua-yottadb v1.2:
+bhoyt@presto:~$ time LUA_CPATH="/packages/lib/lua/5.4/?.so;$LUA_CPATH" LUA_PATH="/packages/share/lua/5.4/?.lua;$LUA_PATH" time mlua/lua-O0 zadloop.lua
+total of 4641687 records
+real	0m20.490s
+user	0m18.569s
+sys	0m1.895s
+
+bhoyt@presto:~$ time LUA_CPATH="/packages/lib/lua/5.4/?.so;$LUA_CPATH" LUA_PATH="/packages/share/lua/5.4/?.lua;$LUA_PATH" time mlua/lua-O3 zadloop.lua
+total of 4641687 records
+real	0m11.680s
+user	0m9.781s
+sys	0m1.880s
+
+
+
+# lua-yottadb v2.1:
+bhoyt@presto:~/mlua$ time ./lua-O0 ~/zadloop.lua
+total of 4641687 records
+real	0m7.371s
+user	0m5.447s
+sys	0m1.908s
+
+bhoyt@presto:~/mlua$ time ./lua-O3 ~/zadloop.lua
+total of 4641687 records
+real	0m6.421s
+user	0m4.510s
+sys	0m1.897s

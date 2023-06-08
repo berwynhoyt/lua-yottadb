@@ -1,8 +1,8 @@
-; Run with: time yottadb -run %T1^zadloop
+; Run with: time yottadb -run zadloop
 
-%T1 ;sub
- n x,y,z,node,cnt
- s node="",cnt=0
- f  s node=$O(^BCAT("lvd",node)) q:node=""  s cnt=cnt+1
- w !,cnt_" records"
- q
+traverse()
+ new x,y,z,node,cnt
+ set node="",cnt=0
+ for  s node=$O(^BCAT("lvd",node)) q:node=""  s cnt=cnt+1
+ write cnt," records",!
+ quit
