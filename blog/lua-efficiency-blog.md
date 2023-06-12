@@ -197,32 +197,32 @@ By now, I've taken 25 days to implement this thing. I'm going to have some serio
 
 ### Iteration 4: The gauntlet challenge - cheap node creation
 
-I haven't implemented this last improvement that will provide virtually instant node creation when using dot notation such as `demographics.country.person`. 
+Instant subnode creation is possible if `light userdata` were used for it. However, these nodes could never be freed since `__gc` finalizer methods do not work on `light userdata` in Lua. Can anyone think of a workaround?
 
-Notice that even with our latest design, each node creation still has the overhead of allocating a `userdata` to reference the root cache-array. Well, Lua has another type called a `light userdata`: which is nothing more than a C pointer. There's no memory allocated to it. If I were to pre-allocate space for several dereferenced cache-arrays within the main cache-array, then the root node can be a `full userdata`, but child nodes can simply point into its depth-array, using `light userdata` – which are completely free to create. We just need to pre-allocate an array of dereferenced cache-arrays at the start of the cache-array struct as follows:
+Consider a Lua object for database node `demographics`. Subnodes can be accessed using dot notation: `demographics.country.person`. Even with our latest design, subnodes still have the overhead of allocating a full `userdata`. But Lua has a cheaper type called a `light userdata`: which is nothing more than a C pointer, and free to create. We just need to pre-allocate space for several dereferenced subnodes within the parent node's `userdata`, and child nodes could simply point into it:
 
 ```C
 typedef struct cachearray_t {
     cachearray_dereferenced[5];
-    ...
+    <regular node contents>...
 ```
 
 This will finally make full use of that mistaken judgment-call I made early on, and re-use pre-allocation to ultimate effect.
 
 But there's a gotcha. Since a `light userdata` object has no storage, Lua doesn't know what type of data it is, and therefore what metatable (i.e. object methods) to associate with it. So there's a single global metatable for all `light userdata` objects. No matter: we can still hook the global metatable, and then double-check ourselves that it points to a cache-array, before running cache-array class methods on it. Should work fine.
 
-Node creation time in lua-yottadb v2.1 is already 47x as fast as v1.2. I'm anticipating this improvement will increase that to 200x, making dot notation virtually free. This will also keep all allocated memory together in one place: also better for CPU caching.
+Node creation time in lua-yottadb v2.1 is already 47x as fast as v1.2, but I'm anticipating this improvement will increase that to 200x, making dot notation virtually free. This will also keep all allocated memory together in one place: also better for CPU caching.
 
-This hack would actually work … except for one problem: it can't collect garbage. Tragically, Lua ignores the `__gc` method on light userdata. This means we'll never be able to remove the light userdata's reference to its root node. Which creates a memory leak. Here's an example to explain:
+This hack would actually work … except for one problem: it can't collect garbage. Tragically, Lua ignores the `__gc` method on `light userdata`. This means we'll never be able to remove the `light userdata's` reference to its root node. Which creates a memory leak. Here's an example to explain:
 
 ```lua
 x = ydb.node("root").subnode
 x = nil
 ```
 
-First, the `root` node is created; then `subnode` references `root`; then Lua assigns `subnode` to `x` so that `x` now references `subnode`. Finally, `x` is deleted. The problem is that when `x` is garbage collected, Lua does not collect light userdata `subnode`, (which is still referencing root). So root is not collected: a memory leak.
+First the `root` node is created; then `subnode` references `root`; then Lua assigns `subnode` to `x` so that `x` now references `subnode`. Finally, `x` is deleted. The problem is that when `x` is garbage-collected, Lua does not collect light userdata `subnode` (which is still referencing root). So root is not collected: a memory leak.
 
-Can any of my readers can see a solution to this puzzle? I'm throwing down the gauntlet. Find a way to work around Lua's lack of garbage collection on light userdata, and I'll make you famous on this blog. :wink:
+Can any of my readers can see a solution to this puzzle? I'm throwing down the gauntlet. Find a way to work around Lua's lack of garbage collection on light userdata, then [post it here](https://github.com/anet-be/lua-yottadb/discussions/28), and I'll make you famous on this blog. :wink:
 
 ## Portability: Python, etc.
 
