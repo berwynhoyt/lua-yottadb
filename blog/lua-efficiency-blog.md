@@ -1,12 +1,12 @@
-# Making Lua–MUMPS Fast
+# Making lua–yottadb Fast
 
-**TLDR:** This blog article is about how we improved [lua-yottadb](https://github.com/anet-be/lua-yottadb) to go ~4x as fast when looping through database records, and a stunning 47x as fast when creating Lua objects for database nodes, plus other improvements ([results here](https://github.com/anet-be/mlua/tree/master/benchmarks#lua-yottadb-v12-compared-with-v21)). There were some low-hanging fruit, but the biggest (and trickiest) improvement was caching the node's subscript array in the Lua object that references a specific database node. Finally, [porting to other language wrappers](#portability-python-etc) is discussed, as well as a tentative thought on how YDB might support an [even faster API](#ydb-api-overhead-a-suggestion). Along the way we [learned numerous things](#lessons) that might help someone port these efficiencies to other languages.
+**TLDR:** YottaDB[^yottadb] is a fast and clean database and it deserves a Lua API that is as fast as possible. This article discusses how we improved [lua-yottadb](https://github.com/anet-be/lua-yottadb) to go ~4× as fast when looping through database records, and a stunning 47× as fast when creating Lua objects for database nodes, plus other improvements ([results here](https://github.com/anet-be/mlua/tree/master/benchmarks#lua-yottadb-v12-compared-with-v21)). Low-hanging fruit aside, the biggest (and trickiest) improvement was caching the node's subscript array in the Lua object that references a specific database node. Finally, [porting to other language wrappers](#portability-python-etc) is discussed, as well as a tentative thought on how YDB might support an [even faster API](#ydb-api-overhead-a-suggestion). Along the way we [learned numerous things](#lessons) that might help someone port these efficiencies to other languages.
 
 ---
 
-I had recently released [MLua](https://github.com/anet-be/mlua), a tool to let MUMPS (M) code call Lua. Then in Oct 2022, I got my first user: [Alain Descamps](https://github.com/AlainDsc), of the Antwerp University Library (sponsors of MLua), and a heavy user of MUMPS. An actual user. Brilliant!
+I had recently released v1.0 of lua-yottadb,[^mlua] a syntax upgrade to a tool that gives Lua easy access to YottaDB. Then in Oct 2022, I got my first user: [Alain Descamps](https://github.com/AlainDsc), of the Antwerp University Library (sponsors of MLua), and a heavy user of YottaDB. An actual user. Brilliant!
 
-But the euphoria didn't last long. Mere hours later, I got Alain's first benchmark: Lua was 4 times slower than M at simply traversing (counting) database records on our dev server. Even worse, when run on my local PC's database, Lua was [8 times slower than M](https://github.com/anet-be/mlua/tree/master/benchmarks#comparison-with-m). Grrr…  So I embarked on what I thought would be a 5-day pursuit of efficiency … but it took 25 days! Nevertheless, I did get the dev server's Lua time down from 4x to 1.3x the speed of M. A very nice result.
+But the euphoria didn't last long. Mere hours later, I got Alain's first benchmark: Lua was 4 times slower than the built-in language ([M](https://en.wikipedia.org/wiki/MUMPS)) at simply traversing (counting) database records on our dev server. Even worse, when run on my local PC's database, Lua was [8 times slower than M](https://github.com/anet-be/mlua/tree/master/benchmarks#comparison-with-m). Grrr…  So I embarked on what I thought would be a 5-day pursuit of efficiency … but it took 25 days! Nevertheless, I did get the dev server's Lua time down from 4× to 1.3× the speed of M. A very nice result.
 
 ## What was the problem?
 
@@ -24,19 +24,18 @@ print("total of " .. cnt .. " records")
 The program above simply loops through a sequence of 5 million database nodes with subscripts `^BCAT.lvd.<n>` like so:
 
 ```lua
-^BCAT("lvd")("")
 ^BCAT("lvd")(1)
 ^BCAT("lvd")(2)
 ^BCAT("lvd")(3) ...
 ```
 
-To do so took 20 seconds in Lua, and 5 seconds [in M](https://github.com/berwynhoyt/lua-yottadb/blob/blog_efficiency/blog/zadloop.m). A quick code review of [lua-yottadb](https://github.com/anet-be/lua-yottadb) (the database access layer of MLua) found a number of low-hanging fruit in the `gref1:subscripts()` method above. The issues were that for every loop iteration, `gref1:subscripts()` did this:
+To do so took 20 seconds in Lua, and 5 seconds [in M](https://github.com/berwynhoyt/lua-yottadb/blob/blog_efficiency/blog/zadloop.m). A quick code review of [lua-yottadb](https://github.com/anet-be/lua-yottadb) found a number of low-hanging fruit in the `gref1:subscripts()` method above. The issues were that for every loop iteration, `gref1:subscripts()` did this:
 
 1. Checked each subscript in the node's 'path' at the Lua level to make sure it was a valid string.
 2. Checked each subscript again at the C level.
 3. Converted the subscript array into a C array of string pointers (for calling the M API), then discarded the C array.
 
-Yep. That all happened at every iteration.
+Yep. All that happened at every iteration.
 
 Next, I built some [benchmarks tests](https://github.com/anet-be/mlua/tree/master/benchmarks) to track our improvement, then got stuck into improving things.[^luabuild] Avoiding number (3) would require caching of the C array. But we could avoid (1) and maybe (2) by checking them just once at the start of the loop. This was fairly quickly done, with respectable improvements to iteration speed, including:
 
@@ -113,7 +112,7 @@ If you're **getting bored** at this point, I suggest you skip to [iteration 3](#
 
 #### Segfaults and Valgrind
 
-That was the design for iteration 1. But the `__parent` thing made it a little complicated, because you had to create the cache-array by recursing backwards into all the node's ancestors. This complexity hid a nasty segfault that I couldn't find for a long time. You know the kind of C pointer bug where the symptom occurs nowhere near the cause? (I should have used `valgrind myprog` to help find it, but I hadn't used [Valgrind](https://valgrind.org/) before, and I didn't realise how dead simple it was to use. Later, I needed it again, and discovered that using it is true bliss.)
+That was the design for iteration 1. But the `__parent` made it complicated, because I had to create the cache-array by recursing backwards into all the node's ancestors. This complexity hid a nasty segfault that I couldn't find for a long time: the kind of C pointer bug where the symptom occurs nowhere near the cause. (I should have used `valgrind myprog` to help find it, but I hadn't used [Valgrind](https://valgrind.org/) before, and I didn't realise how dead simple it was to use. Later, I needed it again, and discovered that using it is true bliss.)
 
 Anyway, the bug ended up being a case of playing "where's Wally" except with hidden asterisks. The code was: `malloc(n_subscripts * sizeof(ydb_buffer_t*))`, except I shouldn't have included the final `*` because the YDB API uses an array of buffer structs, not pointers to structs. In the end I found the bug by manually running Lua's `collectgarbage()` – which often makes memory errors occur sooner rather than later.
 
@@ -123,7 +122,7 @@ Finally, we had a node with cache – for fast access to the database. But we st
 
 But changing a node's subscripts is dodgy. It makes the same node object in Lua refer to a different database node than it used to. Imagine that you're the programmer and have stored that Lua object for use later (e.g., when scanning through to find the highest value node: `maxnode = thisnode`).[^mutable] You'll still be expecting the stored maxnode to point to the maximum node.
 
-Enter the concept of a 'mutable' node, which the programmer explicitly expects to change. Lua iterators like the pairs() can now return specifically mutable nodes. The programmer can convert this to an immutable node if he wants to store it for use after the loop, or he can test for mutability using the `ismutable()` method.
+Enter the concept of a 'mutable' node, which the programmer explicitly expects to change. Lua iterators like the `pairs()` can now return specifically mutable nodes. The programmer can convert this to an immutable node if they want to store it for use after the loop, or they can test for mutability using the `ismutable()` method.
 
 Well, it worked. Now we have a lightning-fast iterator, and in most cases the programmer doesn't have to worry about mutability.
 
@@ -158,7 +157,7 @@ Although it does speed up node creation, it's still not as much as expected, bec
 
 Up to this point I had been assuming I needed a Lua table to create a Lua object. After all, it seemed so efficient to make C just point to the existing Lua strings; and for that I needed Lua to reference those strings: hence a Lua table.
 
-But now I finally did some more benchmarking and showed Lua table creation to be the speed hog. Remember: it does a malloc, links to the Lua garbage collector, creates a hash table, and a numerical array portion. Plus, we're adding three hashed fields, which are not exactly instant: `__parent`, `__cachearray`, and `__depth`.
+But now I finally did some more benchmarking and showed Lua table creation to be the speed hog. Remember: it does a `malloc()`, links to the Lua garbage collector, creates a hash table, and a numerical array portion. Plus, we're adding three hashed fields, which are not exactly instant: `__parent`, `__cachearray`, and `__depth`.
 
 It sure would be much faster if we could store all this data inside a C struct. So I read the manual again and discovered that the `userdata` type can *be* a Lua object all by itself. I should have guessed this from the start. You can assign a metatable to a `userdata` – which means that you can give it object methods – which means it can actually *be* the node object, all by itself. No need to create a Lua table for a C object at all.
 
@@ -176,7 +175,7 @@ typedef struct cachearray_t {
 
 I pre-allocated space for extra slots (5, by default, before needing reallocation). Thus, when you create `ydb.node("demographics")` you can follow that up with `.country.person[3].female` and all these subsequent subscripts get stored in the same, previously allocated C-array.
 
-Notice that this struct contains two expanding sections (it's really two separate structs): the array of string pointers `subs_array` and the actual string characters `subsdata`. It would be better to keep these in a single array of structs, and thus have just one expanding section. But we cannot do that because we need an array of `ydb_buffer_t` to pass to the YDB API. These two expanding sections adds complexity to the code, but don't slow it down. It would be simpler to allocate two `userdata` sections: one for each section – but that *would* slow it down.
+Notice that this struct contains two expanding sections (it's really two separate structs): the array of string pointers `subs_array` and the actual string characters `subsdata`. It would be better to keep these in a single array of structs, and thus have just one expanding section. But we cannot do that because we need an array of `ydb_buffer_t` to pass to the YDB API. These two expanding sections add complexity to the code, but don't slow it down. It would be simpler to allocate two `userdata` sections: one for each section – but that *would* slow it down.
 
 Also notice that since `subsdata` now stores subscript strings in my C `userdata`, I don't need to keep a Lua table that references their Lua copies, which are now set free.
 
@@ -209,9 +208,9 @@ typedef struct cachearray_t {
 
 This will finally make full use of that mistaken judgment-call I made early on, and re-use pre-allocation to ultimate effect.
 
-But there's a gotcha. Since a `light userdata` object has no storage, Lua doesn't know what type of data it is, and therefore what metatable (i.e. object methods) to associate with it. So there's a single global metatable for all `light userdata` objects. No matter: we can still hook the global metatable, and then double-check ourselves that it points to a cache-array, before running cache-array class methods on it. Should work fine.
+But there's a gotcha. Since a `light userdata` object has no storage, Lua doesn't know what type of data it is, and therefore what metatable (i.e. object methods) to associate with it. So there's a single global metatable for all `light userdata` objects. No matter: we can still hook the global metatable, and then double-check that it points to a cache-array, before running cache-array class methods on it. Should work fine.
 
-Node creation time in lua-yottadb v2.1 is already 47x as fast as v1.2, but I'm anticipating this improvement will increase that to 200x, making dot notation virtually free. This will also keep all allocated memory together in one place: also better for CPU caching.
+Node creation time in lua-yottadb v2.1 is already 47× as fast as v1.2, but I'm anticipating this improvement will increase that to 200x, making dot notation virtually free. This will also keep all allocated memory together in one place: also better for CPU caching.
 
 This hack would actually work … except for one problem: it can't collect garbage. Tragically, Lua ignores the `__gc` method on `light userdata`. This means we'll never be able to remove the `light userdata's` reference to its root node. Which creates a memory leak. Here's an example to explain:
 
@@ -222,11 +221,11 @@ x = nil
 
 First the `root` node is created; then `subnode` references `root`; then Lua assigns `subnode` to `x` so that `x` now references `subnode`. Finally, `x` is deleted. The problem is that when `x` is garbage-collected, Lua does not collect light userdata `subnode` (which is still referencing root). So root is not collected: a memory leak.
 
-Can any of my readers can see a solution to this puzzle? I'm throwing down the gauntlet. Find a way to work around Lua's lack of garbage collection on light userdata, then [post it here](https://github.com/anet-be/lua-yottadb/discussions/28), and I'll make you famous on this blog. :wink:
+Can any of my readers see a solution to this puzzle? I'm throwing down the gauntlet. Find a way to work around Lua's lack of garbage collection on light userdata, then [post it here](https://github.com/anet-be/lua-yottadb/discussions/28), and I'll make you famous on this blog. :wink:
 
 ## Portability: Python, etc.
 
-In theory, my final `cachearray.c` is the best version to port to another language without a compete re-write because it now keeps its strings entirely in C – which means it's fairly self-contained and portable. Having said that, it will need changes in how it receives function parameters: which is from the Lua stack. The Python/etc. portion of the wrapper will also need extensions to support cache-arrays.
+In theory, my final `cachearray.c` is the best version to port to another language without a complete re-write because it now keeps its strings entirely in C – which means it's fairly self-contained and portable. Having said that, it will need changes in how it receives function parameters: which is from the Lua stack. The Python/etc. portion of the wrapper will also need extensions to support cache-arrays.
 
 A quick look at Python's YDBPython, for example, shows that its C code has the same design as the original lua-yottadb – and is probably slow. Every time it accesses the database, it has to verify your subscript list, and copy each string to C. Unlike lua-yottadb, YDBPython also does an additional malloc for each individual subscript string. Caching the subscript array could provide a significant speedup, just as it did for Lua.
 
@@ -236,7 +235,7 @@ At this stage I do not know much about Python's C API: neither about Python's al
 
 ## YDB API overhead: a suggestion
 
-After all this work, why is M still faster? I suspect that lua-yottadb is now about as fast as it can get. So why is database traversal in Lua still 30% slower than M (on our server), when a basic for-loop in [Lua](https://github.com/berwynhoyt/lua-yottadb/blob/blog_efficiency/blog/forloop.lua) is 17x as fast as [M](https://github.com/berwynhoyt/lua-yottadb/blob/blog_efficiency/blog/forloop.m)? My hunch was that there are subscript conversion overheads on the M side of the M-C API, that M doesn't need to incur since it's a built-in language. I had a chat to [Bhaskar](https://gitlab.com/ksbhaskar), founder of YottaDB, and he was able to confirm my hunch, as follows.
+After all this work, why is M still faster? I suspect that lua-yottadb is now about as fast as it can get. So why is database traversal in Lua still 30% slower than M (on our server), when a basic for-loop in [Lua](https://github.com/berwynhoyt/lua-yottadb/blob/blog_efficiency/blog/forloop.lua) is 17× as fast as [M](https://github.com/berwynhoyt/lua-yottadb/blob/blog_efficiency/blog/forloop.m)? My hunch was that there are subscript conversion overheads on the M side of the M-C API, that M doesn't incur since YottaDB includes both a database and a complete implementation of the M language. I had a chat with [Bhaskar](https://gitlab.com/ksbhaskar), founder of YottaDB, and he was able to confirm my hunch, as follows.
 
 YDB keeps its values in what it calls 'mvals'. This is a C struct that can store multiple representations of the same value (number and string), with a bitfield that tells the system which representations are stored. When a value is needed in a new representation, it is converted and stored in the mval. This prevents repeated conversion between representations. However, since the C API does not expose mvals, conversion can add overhead to both the call and the return.
 
@@ -266,8 +265,9 @@ I sure did learn a lot through this process, and I hope you've learned something
 
 
 
+[^yottadb]: YottaDBⓇ is a mature, high performance, hierarchical key-value, language-agnostic, NoSQL database which scales up to mission-critical applications like large real-time core-banking and electronic health records, down to platforms like the Raspberry Pi Zero, and everything in-between; lua-yottadb is YottaDB's Lua API.
+[^mlua]: Actually, the release included the companion tool, [MLua](https://github.com/anet-be/mlua). MLua lets M access Lua; conversely, lua-yottadb lets Lua access M.
 [^luabuild]: Alain's benchmark was skewed by a curiously slow build of Lua that he used. His sysadmin tells me it was compiled with -O0. He has now compiled it with -O3, which has demonstrably doubled the speed. In any case, the benchmark comparisons I've supplied are all from my laptop (the mainframe's database setup is faster).
-
 [^mutable]: Worse, when we later introduce cache-array shared with parent nodes, if you create a sub-node out of it and store that, then your sub-node's parent subscript will get changed, since it uses the same cache-array.
 [^5.1garbage]: Incidentally, this should have been a clue to use the `userdata` type for the object itself *instead of* a Lua table, because `__gc` *does* work on `userdata`, in Lua 5.1. But I didn't get there until iteration 3. At this stage, since Lua 5.1 `userdata` cannot reference Lua values, I was locked into thinking we still needed a Lua table to store Lua references to the subscript strings. Ironically, iteration 3 also required me to implement my own mechanism for `userdata` to reference Lua values so that the dereferenced 
 [^closure_trial]: At this point I tried to store the `__depth` in C by using what Lua calls a 'C closure'. What I didn't realise is that although a normal Lua closure can have Lua locals for each instance of a function, a C closure is different: it can only store one set of locals for the entire C library. This didn't let me store `__depth` against each node object at all. So that was a wasted attempt.
